@@ -18,15 +18,16 @@ from telegram.ext import (
 )
 
 # ===== CONFIG =====
+# Railway environment variables se token lega
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set!")
 
-# [span_1](start_span)API Configuration - Base URL se extra parameters hata diye gaye hain[span_1](end_span)
+# API Configuration
 API_KEY = "RACKSUN"
-BASE_URL = "http://api.subhxcosmo.in/api"
+BASE_URL = "http://api.subhxcosmo.in/api?key=RACKSUN&type=tg&term=1234567890"
 
-# ===== FLASK KEEP-ALIVE =====
+# ===== FLASK KEEP-ALIVE (Railway/Render ke liye) =====
 flask_app = Flask("")
 
 @flask_app.route("/")
@@ -34,8 +35,9 @@ def home():
     return "Bot is Alive!"
 
 def run_flask():
-    # [span_2](start_span)Render ya Railway ke liye port 8080 ya 5000 best hai[span_2](end_span)
-    flask_app.run(host="0.0.0.0", port=8080)
+    # Railway variable "PORT" use karega, agar nahi mila toh 8080 default
+    port = int(os.environ.get("PORT", 8080))
+    flask_app.run(host="0.0.0.0", port=port)
 
 def keep_alive():
     t = Thread(target=run_flask)
@@ -54,7 +56,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     btn_channel = KeyboardButton(
         text="📢 Channel",
-        request_chat=KeyboardButtonRequestChat(request_id=3, chat_id=1), # Simple ID for channel request
+        request_chat=KeyboardButtonRequestChat(request_id=3, chat_is_channel=True),
     )
 
     markup = ReplyKeyboardMarkup(
@@ -99,7 +101,6 @@ async def lookup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await update.message.reply_text("🔍 Searching...")
 
     try:
-        # [span_3](start_span)Params ko clean rakha hai[span_3](end_span)
         params = {
             "key": API_KEY,
             "type": "tg",
@@ -107,52 +108,45 @@ async def lookup(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
 
         res = requests.get(BASE_URL, params=params, timeout=15)
-        res.raise_for_status() 
+        res.raise_for_status()
         data = res.json()
 
-        # Result extracting logic
         result = data.get("result", data)
-        not_found = False
-
+        
+        # Result display logic
         if isinstance(result, dict):
-            # Check success flag
-            if str(result.get("success")).lower() == "false":
-                not_found = True
+            if str(result.get("success", "")).lower() == "false":
+                text = "❌ *Data Not Found!*"
             else:
-                fields = {k: v for k, v in result.items() if k not in ("success", "msg")}
-                if not fields:
-                    not_found = True
-                else:
-                    lines = ["📋 *Result:*\n"]
-                    for key, value in fields.items():
+                lines = ["📋 *Result:*\n"]
+                for key, value in result.items():
+                    if key not in ("success", "msg"):
                         label = key.replace("_", " ").title()
                         lines.append(f"*{label}:* `{value}`")
-                    text = "\n".join(lines)
-        elif not result:
-            not_found = True
+                text = "\n".join(lines) if len(lines) > 1 else "❌ *Data Not Found!*"
         else:
-            text = f"📋 *Result:*\n{result}"
-
-        if not_found:
-            text = "❌ *Data Not Found!*\n\nNo information found for this input."
+            text = f"📋 *Result:*\n`{result}`"
 
         await status_msg.edit_text(text, parse_mode="Markdown")
 
     except Exception as e:
         await status_msg.edit_text(f"❌ Error:\n`{str(e)}`", parse_mode="Markdown")
 
-# ===== MAIN =====
+# ===== MAIN (YAHAN FIX KIYA HAI) =====
 if __name__ == "__main__":
+    # 1. Flask server start karein
     keep_alive()
     print("✅ Flask Server Started!")
 
+    # 2. Bot build karein
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Handlers
+    # 3. Handlers register karein
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.StatusUpdate.USERS_SHARED, handle_users_shared))
     app.add_handler(MessageHandler(filters.StatusUpdate.CHAT_SHARED, handle_chat_shared))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lookup))
 
+    # 4. Polling start karein
     print("✅ Bot is Online!")
     app.run_polling()
