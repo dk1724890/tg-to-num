@@ -1,12 +1,3 @@
-# requirements.txt me 'python-telegram-bot' likhen
-import os
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler
-
-async def hello(update: Update, context):
-    await update.message.reply_text(f'Hello {update.effective_user.first_name}!')
-
-app = ApplicationBuilder().token("YOUR_TOKEN_HERE").build()
-app.add_handler(CommandHandler("hello", hello))
-app.listen(port=int(os.environ.get("PORT", "8080"))) # Railway compatibility
-app.run_polling()
+flask
+requests
+python-telegram-bot==22.7
