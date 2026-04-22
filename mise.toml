@@ -1,0 +1,10 @@
+[tools]
+# Aap jo Python version use karna chahte hain
+python = "3.10"
+
+# Agar aapko Node.js ki bhi zaroorat hai (optional)
+# node = "20"
+
+[env]
+# Aap yahan environment variables bhi set kar sakte hain
+PYTHONPATH = "."
