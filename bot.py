@@ -1,51 +1,158 @@
+import os
 import requests
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from flask import Flask
+from threading import Thread
+from telegram import (
+    Update,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    KeyboardButtonRequestUsers,
+    KeyboardButtonRequestChat,
+)
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,
+)
 
 # ===== CONFIG =====
-BOT_TOKEN = "YOUR_BOT_TOKEN"
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set!")
 
+# [span_1](start_span)API Configuration - Base URL se extra parameters hata diye gaye hain[span_1](end_span)
 API_KEY = "RACKSUN"
-BASE_URL = "http://api.subhxcosmo.in/api?key=RACKSUN&type=tg&term=1234567890"
+BASE_URL = "http://api.subhxcosmo.in/api"
+
+# ===== FLASK KEEP-ALIVE =====
+flask_app = Flask("")
+
+@flask_app.route("/")
+def home():
+    return "Bot is Alive!"
+
+def run_flask():
+    # [span_2](start_span)Render ya Railway ke liye port 8080 ya 5000 best hai[span_2](end_span)
+    flask_app.run(host="0.0.0.0", port=8080)
+
+def keep_alive():
+    t = Thread(target=run_flask)
+    t.daemon = True
+    t.start()
 
 # ===== START COMMAND =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👋 Hello!\n\nSend me a Telegram username or number.\nExample:\n@username or 1234567890"
+    btn_user = KeyboardButton(
+        text="👤 User",
+        request_users=KeyboardButtonRequestUsers(request_id=1, max_quantity=1),
+    )
+    btn_group = KeyboardButton(
+        text="👥 Group",
+        request_chat=KeyboardButtonRequestChat(request_id=2, chat_is_channel=False),
+    )
+    btn_channel = KeyboardButton(
+        text="📢 Channel",
+        request_chat=KeyboardButtonRequestChat(request_id=3, chat_id=1), # Simple ID for channel request
     )
 
-# ===== MAIN HANDLER =====
+    markup = ReplyKeyboardMarkup(
+        [[btn_user, btn_group, btn_channel]],
+        resize_keyboard=True,
+    )
+
+    welcome_msg = (
+        f"*Welcome To @num_info7_bot* 🖐️\n\n"
+        f"*Your ID :* `{update.effective_user.id}`\n\n"
+        f"Send me a Telegram username or number to look up.\n"
+        f"Example: @username or 1234567890\n\n"
+        f"Or use the buttons below to get User/Group/Channel ID:"
+    )
+
+    await update.message.reply_text(
+        welcome_msg,
+        reply_markup=markup,
+        parse_mode="Markdown",
+    )
+
+# ===== USER ID HANDLER =====
+async def handle_users_shared(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.users_shared:
+        for user in update.message.users_shared.users:
+            await update.message.reply_text(
+                f"👤 *User ID:* `{user.user_id}`",
+                parse_mode="Markdown",
+            )
+
+# ===== CHAT ID HANDLER =====
+async def handle_chat_shared(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.chat_shared:
+        await update.message.reply_text(
+            f"🆔 *Chat ID:* `{update.message.chat_shared.chat_id}`",
+            parse_mode="Markdown",
+        )
+
+# ===== LOOKUP HANDLER =====
 async def lookup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_input = update.message.text.strip()
-
-    await update.message.reply_text("🔍 Searching...")
+    status_msg = await update.message.reply_text("🔍 Searching...")
 
     try:
+        # [span_3](start_span)Params ko clean rakha hai[span_3](end_span)
         params = {
             "key": API_KEY,
             "type": "tg",
-            "term": user_input
+            "term": user_input,
         }
 
-        res = requests.get(BASE_URL, params=params, timeout=10)
+        res = requests.get(BASE_URL, params=params, timeout=15)
+        res.raise_for_status() 
         data = res.json()
 
-        # response handle (customize based on API response)
-        if "result" in data:
-            result = data["result"]
-        else:
-            result = data
+        # Result extracting logic
+        result = data.get("result", data)
+        not_found = False
 
-        await update.message.reply_text(f"📱 Result:\n{result}")
+        if isinstance(result, dict):
+            # Check success flag
+            if str(result.get("success")).lower() == "false":
+                not_found = True
+            else:
+                fields = {k: v for k, v in result.items() if k not in ("success", "msg")}
+                if not fields:
+                    not_found = True
+                else:
+                    lines = ["📋 *Result:*\n"]
+                    for key, value in fields.items():
+                        label = key.replace("_", " ").title()
+                        lines.append(f"*{label}:* `{value}`")
+                    text = "\n".join(lines)
+        elif not result:
+            not_found = True
+        else:
+            text = f"📋 *Result:*\n{result}"
+
+        if not_found:
+            text = "❌ *Data Not Found!*\n\nNo information found for this input."
+
+        await status_msg.edit_text(text, parse_mode="Markdown")
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Error:\n{str(e)}")
+        await status_msg.edit_text(f"❌ Error:\n`{str(e)}`", parse_mode="Markdown")
 
 # ===== MAIN =====
-app = ApplicationBuilder().token(BOT_TOKEN).build()
+if __name__ == "__main__":
+    keep_alive()
+    print("✅ Flask Server Started!")
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lookup))
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-print("✅ Bot Running...")
-app.run_polling()
+    # Handlers
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.StatusUpdate.USERS_SHARED, handle_users_shared))
+    app.add_handler(MessageHandler(filters.StatusUpdate.CHAT_SHARED, handle_chat_shared))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lookup))
+
+    print("✅ Bot is Online!")
+    app.run_polling()
