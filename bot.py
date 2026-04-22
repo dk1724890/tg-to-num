@@ -1,3 +1,4 @@
+SCIENTIST. Racksun:
 import os
 import requests
 from flask import Flask
@@ -8,35 +9,34 @@ from telegram import (
     KeyboardButton,
     KeyboardButtonRequestUsers,
     KeyboardButtonRequestChat,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
 )
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     filters,
     ContextTypes,
 )
 
-# ===== CONFIG =====
-# Railway environment variables se token lega
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set!")
 
-# API Configuration
-API_KEY = "RACKSUN"
-BASE_URL = "http://api.subhxcosmo.in/api?key=RACKSUN&type=tg&term=1234567890"
+BASE_URL = "https://api.subhxcosmo.in/api?key=RACKSUN&type=tg&term="
+CHANNEL_USERNAME = "@cineflixdk"
+CHANNEL_LINK = "https://t.me/cineflixdk"
 
-# ===== FLASK KEEP-ALIVE (Railway/Render ke liye) =====
-flask_app = Flask("")
+flask_app = Flask(name)
 
 @flask_app.route("/")
 def home():
     return "Bot is Alive!"
 
 def run_flask():
-    # Railway variable "PORT" use karega, agar nahi mila toh 8080 default
-    port = int(os.environ.get("PORT", 8080))
+    port = int(os.environ.get("PORT", 8000))
     flask_app.run(host="0.0.0.0", port=port)
 
 def keep_alive():
@@ -44,109 +44,167 @@ def keep_alive():
     t.daemon = True
     t.start()
 
-# ===== START COMMAND =====
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    btn_user = KeyboardButton(
-        text="👤 User",
-        request_users=KeyboardButtonRequestUsers(request_id=1, max_quantity=1),
-    )
-    btn_group = KeyboardButton(
-        text="👥 Group",
-        request_chat=KeyboardButtonRequestChat(request_id=2, chat_is_channel=False),
-    )
-    btn_channel = KeyboardButton(
-        text="📢 Channel",
-        request_chat=KeyboardButtonRequestChat(request_id=3, chat_is_channel=True),
-    )
+async def is_member(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    try:
+        member = await context.bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+        return member.status in ["member", "administrator", "creator"]
+    except Exception:
+        return False
 
-    markup = ReplyKeyboardMarkup(
-        [[btn_user, btn_group, btn_channel]],
-        resize_keyboard=True,
+async def send_join_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user
+    first_name = user.first_name or "User"
+    join_button = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK)],
+        [InlineKeyboardButton("✅ I've Joined", callback_data="check_joined")]
+    ])
+    text = (
+        f"⚠️ *Hello {first_name}!*\n\n"
+        f"Join our channel to use this bot.\n"
+        f"After joining, click *I've Joined* button."
     )
+    sent = await update.message.reply_text(text, reply_markup=join_button, parse_mode="Markdown")
+    context.user_data["join_msg_id"] = sent.message_id
 
-    welcome_msg = (
-        f"*Welcome To @num_info7_bot* 🖐️\n\n"
-        f"*Your ID :* `{update.effective_user.id}`\n\n"
-        f"Send me a Telegram username or number to look up.\n"
-        f"Example: @username or 1234567890\n\n"
-        f"Or use the buttons below to get User/Group/Channel ID:"
-    )
-
-    await update.message.reply_text(
-        welcome_msg,
-        reply_markup=markup,
-        parse_mode="Markdown",
-    )
-
-# ===== USER ID HANDLER =====
-async def handle_users_shared(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.users_shared:
-        for user in update.message.users_shared.users:
-            await update.message.reply_text(
-                f"👤 *User ID:* `{user.user_id}`",
-                parse_mode="Markdown",
-            )
-
-# ===== CHAT ID HANDLER =====
-async def handle_chat_shared(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.chat_shared:
-        await update.message.reply_text(
-            f"🆔 *Chat ID:* `{update.message.chat_shared.chat_id}`",
-            parse_mode="Markdown",
+async def delete_join_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    msg_id = context.user_data.get("join_msg_id")
+    if msg_id:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+        except Exception:
+            pass
+        context.user_data.pop("join_msg_id", None)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="✅ *You have successfully joined our channel!*\n\nYou can now use the bot freely. Send /start to begin.",
+            parse_mode="Markdown"
         )
 
-# ===== LOOKUP HANDLER =====
+async def check_joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    if await is_member(user_id, context):
+        await query.message.delete()
+        context.user_data.pop("join_msg_id", None)
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="✅ *You have successfully joined our channel!*\n\nYou can now use the bot freely. Send /start to begin.",
+            parse_mode="Markdown"
+        )
+    else:
+        await query.answer("❌ You haven't joined yet! Please join first.", show_alert=True)
+
+def main_menu_markup() -> ReplyKeyboardMarkup:
+    btn_user = KeyboardButton(text="User", request_users=KeyboardButtonRequestUsers(request_id=1, max_quantity=1))
+    btn_group = KeyboardButton(text="Group", request_chat=KeyboardButtonRequestChat(request_id=2, chat_is_channel=False))
+    btn_channel = KeyboardButton(text="Channel", request_chat=KeyboardButtonRequestChat(request_id=3, chat_is_channel=True))
+    return ReplyKeyboardMarkup([[btn_user, btn_group, btn_channel]], resize_keyboard=True)
+
+async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, header: str = None):
+
+user_id = update.message.from_user.id
+    welcome_msg = (
+        (header + "\n\n" if header else "")
+        + "*Welcome to @num_info7_bot*\n\n"
+        + f"*Your ID :* {user_id}\n\n"
+        + "Send me a Telegram username or ID to look up.\n"
+        + "Example: @username or 1234567890\n\n"
+        + "Or use the buttons below to get User/Group/Channel ID:"
+    )
+    await update.message.reply_text(welcome_msg, reply_markup=main_menu_markup(), parse_mode="Markdown")
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    chat_id = update.message.chat_id
+    if not await is_member(user_id, context):
+        await send_join_message(update, context)
+        return
+    await delete_join_message(context, chat_id)
+    context.user_data.clear()
+    await show_main_menu(update, context)
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    chat_id = update.message.chat_id
+    if not await is_member(user_id, context):
+        await send_join_message(update, context)
+        return
+    await delete_join_message(context, chat_id)
+    help_text = (
+        "🤖 *Welcome to @num_info7_bot Help*\n\n"
+        "📱 Send @username or UID directly to get info\n\n"
+        "Commands:\n"
+        "/start\n"
+        "/help\n"
+        "/settings\n"
+        "/back\n"
+        "/cancel"
+    )
+    await update.message.reply_text(help_text, parse_mode="Markdown")
+
+async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    chat_id = update.message.chat_id
+    if not await is_member(user_id, context):
+        await send_join_message(update, context)
+        return
+    await delete_join_message(context, chat_id)
+    settings_text = (
+        "⚙️ *Settings*\n\n"
+        "📱 Username / UID Lookup available\n"
+        "👥 User / Group / Channel ID buttons\n"
+    )
+    await update.message.reply_text(settings_text, parse_mode="Markdown")
+
 async def lookup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    chat_id = update.message.chat_id
+    if not await is_member(user_id, context):
+        await send_join_message(update, context)
+        return
+    await delete_join_message(context, chat_id)
+
     user_input = update.message.text.strip()
-    status_msg = await update.message.reply_text("🔍 Searching...")
+    is_username = user_input.startswith("@") and len(user_input) > 1
+    is_number = user_input.isdigit()
+
+    if not is_username and not is_number:
+        return
+
+    await update.message.reply_text("🔍 Searching...")
 
     try:
-        params = {
-            "key": API_KEY,
-            "type": "tg",
-            "term": user_input,
-        }
-
-        res = requests.get(BASE_URL, params=params, timeout=15)
-        res.raise_for_status()
+        url = BASE_URL + user_input
+        res = requests.get(url, timeout=10)
         data = res.json()
 
         result = data.get("result", data)
-        
-        # Result display logic
-        if isinstance(result, dict):
-            if str(result.get("success", "")).lower() == "false":
-                text = "❌ *Data Not Found!*"
-            else:
-                lines = ["📋 *Result:*\n"]
-                for key, value in result.items():
-                    if key not in ("success", "msg"):
-                        label = key.replace("_", " ").title()
-                        lines.append(f"*{label}:* `{value}`")
-                text = "\n".join(lines) if len(lines) > 1 else "❌ *Data Not Found!*"
-        else:
-            text = f"📋 *Result:*\n`{result}`"
 
-        await status_msg.edit_text(text, parse_mode="Markdown")
+        if not result:
+            await update.message.reply_text("*Data Not Found!*", parse_mode="Markdown")
+            return
+
+        lines = ["*Result:*\n"]
+        for key, value in result.items():
+            if key in ("success", "msg"):
+                continue
+            lines.append(f"*{key.title()}:* {value}")
+
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
     except Exception as e:
-        await status_msg.edit_text(f"❌ Error:\n`{str(e)}`", parse_mode="Markdown")
+        await update.message.reply_text(f"Error:\n{str(e)}")
 
-# ===== MAIN (YAHAN FIX KIYA HAI) =====
-if __name__ == "__main__":
-    # 1. Flask server start karein
+if name == "main":
     keep_alive()
-    print("✅ Flask Server Started!")
-
-    # 2. Bot build karein
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # 3. Handlers register karein
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.StatusUpdate.USERS_SHARED, handle_users_shared))
-    app.add_handler(MessageHandler(filters.StatusUpdate.CHAT_SHARED, handle_chat_shared))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("settings", settings_command))
+
+    app.add_handler(CallbackQueryHandler(check_joined_callback, pattern="check_joined"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lookup))
 
-    # 4. Polling start karein
-    print("✅ Bot is Online!")
+    print("Bot is Online!")
     app.run_polling()
