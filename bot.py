@@ -20,12 +20,11 @@ from telegram.ext import (
 # ===== CONFIG =====
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 if not BOT_TOKEN:
-    # Testing ke liye aap yahan apna token dal sakte hain
-    # BOT_TOKEN = "YOUR_TOKEN_HERE"
     raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set!")
 
-API_KEY = "racksun"
-BASE_URL = "http://api.subhxcosmo.in/api?key=RACKSUN&type=tg&term=1234567890"
+# [span_1](start_span)API Configuration - Base URL se extra parameters hata diye gaye hain[span_1](end_span)
+API_KEY = "RACKSUN"
+BASE_URL = "http://api.subhxcosmo.in/api"
 
 # ===== FLASK KEEP-ALIVE =====
 flask_app = Flask("")
@@ -35,7 +34,7 @@ def home():
     return "Bot is Alive!"
 
 def run_flask():
-    # Flask default 8000 port par deploy nahi hota aksar, 5000 ya 8080 use karein
+    # [span_2](start_span)Render ya Railway ke liye port 8080 ya 5000 best hai[span_2](end_span)
     flask_app.run(host="0.0.0.0", port=8080)
 
 def keep_alive():
@@ -55,7 +54,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     btn_channel = KeyboardButton(
         text="📢 Channel",
-        request_chat=KeyboardButtonRequestChat(request_id=3, chat_is_channel=True),
+        request_chat=KeyboardButtonRequestChat(request_id=3, chat_id=1), # Simple ID for channel request
     )
 
     markup = ReplyKeyboardMarkup(
@@ -100,6 +99,7 @@ async def lookup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await update.message.reply_text("🔍 Searching...")
 
     try:
+        # [span_3](start_span)Params ko clean rakha hai[span_3](end_span)
         params = {
             "key": API_KEY,
             "type": "tg",
@@ -107,14 +107,16 @@ async def lookup(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
 
         res = requests.get(BASE_URL, params=params, timeout=15)
-        res.raise_for_status() # Check for HTTP errors
+        res.raise_for_status() 
         data = res.json()
 
+        # Result extracting logic
         result = data.get("result", data)
         not_found = False
 
         if isinstance(result, dict):
-            if not result.get("success", True):
+            # Check success flag
+            if str(result.get("success")).lower() == "false":
                 not_found = True
             else:
                 fields = {k: v for k, v in result.items() if k not in ("success", "msg")}
@@ -146,6 +148,7 @@ if __name__ == "__main__":
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    # Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.StatusUpdate.USERS_SHARED, handle_users_shared))
     app.add_handler(MessageHandler(filters.StatusUpdate.CHAT_SHARED, handle_chat_shared))
